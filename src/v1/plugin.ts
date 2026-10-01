@@ -1,6 +1,8 @@
+import { z } from "zod";
 import { createRuntime } from "../core/runtime.js";
 import { isImageAttachment } from "../core/image.js";
-import { buildSkippedNote } from "../core/manager.js";
+import { buildSkippedNote, type VisionManager } from "../core/manager.js";
+import { stripMainImages, countImages, type WireMessage } from "../core/transform.js";
 import { createV1Transport, type V1Client } from "./transport.js";
 
 export interface V1PluginInput {
@@ -24,9 +26,44 @@ export interface V1ToolAfterOutput {
   attachments?: unknown[];
 }
 
+export interface V1ToolContext {
+  sessionID: string;
+  messageID?: string;
+  agent?: string;
+}
+
 export type V1Hooks = {
   "tool.execute.after"?: (input: V1ToolAfterInput, output: V1ToolAfterOutput) => Promise<void>;
+  "experimental.chat.messages.transform"?: (input: unknown, output: { messages: WireMessage[] }) => Promise<void>;
+  tool?: Record<string, V1ToolDefinition>;
 };
+
+export interface V1ToolDefinition {
+  description: string;
+  args: Record<string, unknown>;
+  execute: (args: Record<string, unknown>, context: V1ToolContext) => Promise<unknown>;
+}
+
+function makeVisionAskTool(manager: VisionManager): V1ToolDefinition {
+  return {
+    description:
+      "Ask the persistent vision session about images previously read in this session " +
+      "(or ask it to compare earlier images). Returns a textual answer only.",
+    args: {
+      question: z.string().describe("The question to ask about previously read images."),
+    },
+    execute: async (args, context) => {
+      const question = String(args.question ?? "").trim();
+      if (!question) return "[vision] empty question";
+      try {
+        const answer = await manager.ask(context.sessionID, question);
+        return answer || "[vision] no answer";
+      } catch (err) {
+        return `[vision] error: ${String((err as Error)?.message ?? err)}`;
+      }
+    },
+  };
+}
 
 /**
  * OpenCode V1 adapter.
@@ -73,6 +110,24 @@ export const VisionPluginV1 = async (input?: V1PluginInput, options?: unknown): 
       } catch (err) {
         runtime.logger.error(`tool.execute.after failed: ${String((err as Error)?.message ?? err)}`);
       }
+    },
+
+    "experimental.chat.messages.transform": async (_input, output) => {
+      try {
+        const removed = stripMainImages(output.messages, (sid) => manager.classify(sid) === "vision");
+        if (runtime.cfg.debug) {
+          const counts = countImages(output.messages);
+          runtime.logger.debug(`transform removed=${removed} imagesBySession=${JSON.stringify(counts)}`);
+        } else if (removed > 0) {
+          runtime.logger.debug(`stripped ${removed} historical image attachment(s) from a main request`);
+        }
+      } catch (err) {
+        runtime.logger.error(`messages.transform failed: ${String((err as Error)?.message ?? err)}`);
+      }
+    },
+
+    tool: {
+      vision_ask: makeVisionAskTool(manager),
     },
   };
 };

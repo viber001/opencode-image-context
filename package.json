@@ -14,7 +14,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "bun build src/v1.ts src/v2.ts --outdir dist --target node --format esm",
+    "build": "bun build ./src/v1.ts --outdir dist --target node --format esm --external @opencode-ai/plugin --external zod",
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
@@ -23,5 +23,8 @@
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "zod": "4.1.8"
+  }
 }
