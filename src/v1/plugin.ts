@@ -137,8 +137,13 @@ export const VisionPluginV1 = async (input?: V1PluginInput, options?: unknown): 
           runtime.logger.info(`retained newest ${outcome.kept} images`);
         }
         if (runtime.cfg.debug) {
+          const perSession: Record<string, number> = {};
+          for (const m of output.messages) {
+            const sid = (m as { info?: { sessionID?: string } }).info?.sessionID ?? "?";
+            perSession[sid] = (perSession[sid] ?? 0) + JSON.stringify(m).length;
+          }
           runtime.logger.debug(
-            `transform removed=${removed} evicted=${outcome.evicted} imagesBySession=${JSON.stringify(countImages(output.messages))}`,
+            `transform removed=${removed} evicted=${outcome.evicted} imagesBySession=${JSON.stringify(countImages(output.messages))} wireBytes=${JSON.stringify(perSession)}`,
           );
         }
       } catch (err) {
