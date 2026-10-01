@@ -80,25 +80,40 @@ by `opencode-acp`) and never modifies Headroom.
 
 ## Install
 
-Build:
-
 ```sh
 bun install
-bun run build        # emits dist/v1.js and dist/v2.js
+./install.sh            # auto-detects runtimes and installs for each
 ```
 
-**OpenCode V1** — plugins are auto-discovered from `<config>/plugins/*.ts|js`:
+`install.sh` detects installed OpenCode binaries (`opencode`, `opencode2`, plus
+`/usr/local/bin` and `~/.local/bin`) and their major version, then writes the
+matching adapter into the config dir (`$XDG_CONFIG_HOME/opencode` or
+`~/.config/opencode`):
+
+| Detected | Writes |
+| --- | --- |
+| V1 (`opencode` major 1) | `<config>/plugins/opencode-image-context.ts` → `dist/v1.js` |
+| V2 (`opencode`/`opencode2` major ≥ 2) | `<config>/plugin/opencode-image-context.js` (copy of `dist/v2.js`) |
+
+Options: `--v1`, `--v2`, `--all` (default), `--uninstall`, `--config DIR`,
+`--source DIR`, `--build`, `--dry-run`, `--help`. Build is skipped when the
+needed `dist/` output already exists; `--build` forces it.
+
+Equivalent `make` targets: `make install`, `make install-v1`, `make install-v2`,
+`make build`, `make test`, `make typecheck`, `make uninstall`.
+
+Manual install (if you prefer):
 
 ```sh
+bun run build        # emits dist/v1.js and dist/v2.js
+
+# V1 — auto-discovered from <config>/plugins/*.ts|js
 cat > ~/.config/opencode/plugins/opencode-image-context.ts <<'EOF'
 import m from "/absolute/path/to/opencode-image-context/dist/v1.js";
 export default m;
 EOF
-```
 
-**OpenCode V2** — auto-discovered from `<config>/plugin/*.js`:
-
-```sh
+# V2 — auto-discovered from <config>/plugin/*.js
 mkdir -p ~/.config/opencode/plugin
 cp /absolute/path/to/opencode-image-context/dist/v2.js \
    ~/.config/opencode/plugin/opencode-image-context.js
