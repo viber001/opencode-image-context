@@ -12,11 +12,8 @@ typecheck:
 install:
 	./install.sh
 
-install-v1:
-	./install.sh --v1
-
-install-v2:
-	./install.sh --v2
+# One dual-compatible file serves both hosts, so these are aliases.
+install-v1 install-v2: install
 
 uninstall:
 	./install.sh --uninstall

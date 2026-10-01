@@ -50,7 +50,8 @@ src/v1/plugin.ts        V1 adapter (tool.execute.after + messages.transform)
 src/v2/transport.ts     V2 ctx.session -> VisionTransport
 src/v2/plugin.ts        V2 adapter (tool.hook + session.hook)
 src/v2/transform.ts     V2 message/part transform helpers
-src/v1.ts / src/v2.ts   bundle entry points
+src/index.ts            single dual-compatible entry (default { id, server, setup })
+src/v1.ts / src/v2.ts   per-runtime bundle entry points (subpath exports)
 ```
 
 ## Configuration
@@ -82,48 +83,52 @@ by `opencode-acp`) and never modifies Headroom.
 
 ```sh
 bun install
-./install.sh            # auto-detects runtimes and installs for each
+./install.sh            # writes one self-contained file into the config dir
 ```
 
-`install.sh` detects installed OpenCode binaries (`opencode`, `opencode2`, plus
-`/usr/local/bin` and `~/.local/bin`) and their version, then writes the matching
-adapter into the config dir (`$XDG_CONFIG_HOME/opencode` or
-`~/.config/opencode`):
+OpenCode 1 and OpenCode 2 both discover local plugins from `<config>/plugin/`
+**and** `<config>/plugins/`, and neither location nor the config contents reveal
+which version is installed (the config dir is shared; the credential table and
+`migration.v1-v2` marker exist on both). So instead of guessing the runtime,
+this package ships **one** bundle whose default export carries both entry
+shapes:
 
-| Detected | Writes |
-| --- | --- |
-| V1 (`opencode` major 1) | `<config>/plugins/opencode-image-context.ts` → `dist/v1.js` |
-| V2 (`opencode`/`opencode2` major ≥ 2) | `<config>/plugin/opencode-image-context.js` (copy of `dist/v2.js`) |
+```ts
+export default {
+  id: "opencode-image-context",
+  server: VisionPluginV1, // read by the OpenCode 1 loader
+  setup: VisionPluginV2,  // read by the OpenCode 2 loader
+};
+```
 
-Options: `--v1`, `--v2`, `--all` (default), `--uninstall`, `--config DIR`,
-`--source DIR`, `--build`, `--no-exec`, `--dry-run`, `--help`. Build is skipped
-when the needed `dist/` output already exists; `--build` forces it.
+The V1 loader reads `default.server` and ignores `setup`; the V2 loader decodes
+`default` as `{ id, setup }` and ignores `server`. (On a V1 host the embedded
+V2 core also calls `setup` in a registration-only pass — `VisionPluginV2`
+detects the missing `tool`/`session` domains and no-ops.)
 
-The version is read from install metadata first — the Homebrew Cellar path
-(e.g. `/opt/homebrew/Cellar/opencode/1.18.34/...`) or a neighbouring
-`package.json` — so the binary is not run. `--version` is used only as a
-fallback, and `--no-exec` disables that fallback entirely. Note that the config
-directory alone does not record the runtime version, so neither `install.sh`
-nor anything else can tell V1 from V2 purely from `~/.config/opencode/`.
+`install.sh` copies the self-contained bundle (`dist/index.js`, zod and
+`@opencode-ai/plugin` inlined) to:
 
-Equivalent `make` targets: `make install`, `make install-v1`, `make install-v2`,
-`make build`, `make test`, `make typecheck`, `make uninstall`.
+| Writes |
+| --- |
+| `<config>/plugins/opencode-image-context.js` (one file, both runtimes) |
+
+Detected binaries are reported for information only; version detection no
+longer selects the target. Options: `--config DIR`, `--source DIR`, `--build`,
+`--check`, `--uninstall`, `--no-exec`, `--dry-run`, `--help`. `--v1`/`--v2`/
+`--all` are accepted for backwards compatibility but all install the same file.
+Build is skipped when `dist/index.js` already exists; `--build` forces it.
+
+Equivalent `make` targets: `make install`, `make build`, `make test`,
+`make typecheck`, `make uninstall` (`make install-v1`/`install-v2` alias
+`install`).
 
 Manual install (if you prefer):
 
 ```sh
-bun run build        # emits dist/v1.js and dist/v2.js
-
-# V1 — auto-discovered from <config>/plugins/*.ts|js
-cat > ~/.config/opencode/plugins/opencode-image-context.ts <<'EOF'
-import m from "/absolute/path/to/opencode-image-context/dist/v1.js";
-export default m;
-EOF
-
-# V2 — auto-discovered from <config>/plugin/*.js
-mkdir -p ~/.config/opencode/plugin
-cp /absolute/path/to/opencode-image-context/dist/v2.js \
-   ~/.config/opencode/plugin/opencode-image-context.js
+bun run build        # emits dist/index.js (+ dist/v1.js, dist/v2.js)
+mkdir -p ~/.config/opencode/plugins
+cp dist/index.js ~/.config/opencode/plugins/opencode-image-context.js
 ```
 
 Restart OpenCode after installing.

@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,17 +13,23 @@ import { join } from "node:path";
  *
  * Set E2E_V2_SSH="" to run locally (when `opencode2` is on PATH).
  *
- * V2 auto-discovers plugins in `<configdir>/plugin/*.js`, so the harness copies
- * the bundled `dist/v2.js` there for the duration of the run and removes it
- * afterwards. No compaction hook is registered; `vision_ask` may be unavailable
- * in this V2 build, so the prompt only exercises the read path.
+ * V2 auto-discovers plugins in `<configdir>/plugin/` and `<configdir>/plugins/`,
+ * so the harness copies the shipped dual-compatible bundle (`dist/index.js`)
+ * there for the duration of the run and removes it afterwards. No compaction
+ * hook is registered; `vision_ask` may be unavailable in this V2 build, so the
+ * prompt only exercises the read path.
  */
 const ENABLED = process.env.RUN_V2_E2E === "1";
 const PROJECT = join(import.meta.dir, "..", "..");
 const SSH = process.env.E2E_V2_SSH ?? "xshu@localhost";
 const OPENCODE2 = process.env.E2E_V2_BIN ?? (SSH ? "/usr/local/bin/opencode2" : "opencode2");
 const MODEL = process.env.E2E_V2_MODEL ?? "headroom-tencent-fork/deepseek/deepseek-flash";
-const REMOTE_PLUGIN = ".config/opencode/plugin/ocimage-e2e-v2.js";
+const REMOTE_PLUGIN = ".config/opencode/plugins/ocimage-e2e-v2.js";
+// The dual-compatible bundle installed for normal use shares a directory with
+// the harness copy; two copies would both load and interfere, so the real one
+// is moved aside for the duration of the run.
+const INSTALLED_PLUGIN = ".config/opencode/plugins/opencode-image-context.js";
+const INSTALLED_PLUGIN_ASIDE = ".config/opencode/plugins/opencode-image-context.js.e2e-aside";
 
 /** Run a shell command locally or over ssh, returning its exit code and output. */
 function shell(command: string, opts: { input?: Buffer; timeoutMs?: number } = {}): { code: number; out: string } {
@@ -41,9 +47,16 @@ describe.skipIf(!ENABLED)("V2 end-to-end", () => {
   beforeAll(() => {
     const built = spawnSync("bun", ["run", "build"], { cwd: PROJECT, stdio: "inherit" });
     if (built.status !== 0) throw new Error("build failed");
-    const dist = readFileSync(join(PROJECT, "dist", "v2.js"));
-    const write = shell(`mkdir -p ~/.config/opencode/plugin && cat > ${REMOTE_PLUGIN}`, { input: dist });
+    // Hide any normally-installed copy so only the harness plugin loads.
+    shell(`[ -e ~/${INSTALLED_PLUGIN} ] && mv ~/${INSTALLED_PLUGIN} ~/${INSTALLED_PLUGIN_ASIDE} || true`);
+    const dist = readFileSync(join(PROJECT, "dist", "index.js"));
+    const write = shell(`mkdir -p ~/.config/opencode/plugins && cat > ${REMOTE_PLUGIN}`, { input: dist });
     if (write.code !== 0) throw new Error(`failed to install V2 plugin: ${write.out}`);
+  });
+
+  afterAll(() => {
+    shell(`rm -f ~/${REMOTE_PLUGIN}`);
+    shell(`[ -e ~/${INSTALLED_PLUGIN_ASIDE} ] && mv ~/${INSTALLED_PLUGIN_ASIDE} ~/${INSTALLED_PLUGIN} || true`);
   });
 
   test(

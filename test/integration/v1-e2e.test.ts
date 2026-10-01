@@ -1,6 +1,6 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,11 +24,22 @@ const OPENCODE = process.env.E2E_BIN ?? "/opt/homebrew/bin/opencode";
 const MODEL = process.env.E2E_MODEL ?? "headroom-tencent-fork/deepseek/deepseek-flash";
 const GLOBAL_PLUGINS = join(homedir(), ".config", "opencode", "plugins");
 const WRAPPER = join(GLOBAL_PLUGINS, `ocimage-e2e-${process.pid}.ts`);
+// The normally-installed plugin shares this directory; a second copy would also
+// load and interfere, so it is moved aside for the duration of the run.
+const INSTALLED_PLUGIN = join(GLOBAL_PLUGINS, "opencode-image-context.js");
+const INSTALLED_ASIDE = join(GLOBAL_PLUGINS, "opencode-image-context.js.e2e-aside");
 
 function run(cmd: string, args: string[], opts: { cwd: string; env: Record<string, string> }, timeoutMs: number) {
   return new Promise<{ code: number | null; out: string }>((resolve) => {
+    // Spawn through a shell rather than as a direct child of bun: launching the
+    // opencode binary directly from `bun test` intermittently exits with
+    // "Error: Session not found", while an intermediate shell execs it cleanly.
     // stdin must be closed, otherwise `opencode run` waits on it forever.
-    const child = spawn(cmd, args, { cwd: opts.cwd, env: opts.env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("/bin/sh", ["-c", 'exec "$@"', "sh", cmd, ...args], {
+      cwd: opts.cwd,
+      env: opts.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let out = "";
     child.stdout.on("data", (d) => (out += d.toString()));
     child.stderr.on("data", (d) => (out += d.toString()));
@@ -48,7 +59,13 @@ describe.skipIf(!ENABLED)("V1 end-to-end", () => {
   beforeAll(() => {
     const built = spawnSync("bun", ["run", "build"], { cwd: PROJECT, stdio: "inherit" });
     if (built.status !== 0) throw new Error("build failed");
+    if (existsSync(INSTALLED_PLUGIN)) renameSync(INSTALLED_PLUGIN, INSTALLED_ASIDE);
     writeFileSync(WRAPPER, `import m from "${PROJECT}/integration/v1/plugin.mjs";\nexport default m;\n`);
+  });
+
+  afterAll(() => {
+    rmSync(WRAPPER, { force: true });
+    if (existsSync(INSTALLED_ASIDE)) renameSync(INSTALLED_ASIDE, INSTALLED_PLUGIN);
   });
 
   test(

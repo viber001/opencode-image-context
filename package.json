@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Bound base64 image payloads replayed into OpenCode sessions (V1 + V2) while preserving recent visual context.",
   "exports": {
+    ".": "./dist/index.js",
     "./v1": "./dist/v1.js",
     "./v2": "./dist/v2.js"
   },
@@ -14,7 +15,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "bun build ./src/v1.ts ./src/v2.ts --outdir dist --target node --format esm --external @opencode-ai/plugin --external zod",
+    "build": "bun build ./src/index.ts --outdir dist --target node --format esm && bun build ./src/v1.ts ./src/v2.ts --outdir dist --target node --format esm --external @opencode-ai/plugin --external zod",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:e2e": "RUN_V1_E2E=1 bun test test/integration",

@@ -113,6 +113,13 @@ function readAttachments(result: V2ToolAfter["result"]): Attachment[] {
  * No compaction hook is registered: OpenCode ACP owns main-session compaction.
  */
 export async function VisionPluginV2(ctx: V2PluginContext): Promise<void> {
+  // OpenCode 1 hosts also boot an embedded V2 core in a registration-only pass
+  // (no tool/session domains). This adapter only has work to do on a real V2
+  // host, so skip the embedded pass to avoid duplicate work and side effects.
+  if (typeof ctx?.tool?.hook !== "function" || typeof ctx?.session?.hook !== "function") {
+    return;
+  }
+
   const runtime = createRuntime(resolveOptions(ctx.options));
   if (!runtime.cfg.enabled) {
     runtime.logger.info("disabled by configuration");
