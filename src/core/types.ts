@@ -77,6 +77,8 @@ export interface VisionConfig {
   analysisQuestion: string;
   /** Enable debug logging. */
   debug: boolean;
+  /** Append log lines to this file instead of stderr (used by integration tests). */
+  logFile?: string;
 }
 
 export const DEFAULT_CONFIG: VisionConfig = {

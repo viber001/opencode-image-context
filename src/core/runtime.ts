@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import { resolveConfig } from "./config.js";
 import { createLogger, type Logger } from "./logger.js";
 import { ImageStore } from "./imageStore.js";
@@ -19,7 +20,10 @@ export interface Runtime {
 /** Build the shared core runtime from raw plugin options. */
 export function createRuntime(rawOptions: unknown, transport?: VisionTransport): Runtime {
   const cfg = resolveConfig(rawOptions);
-  const logger = createLogger(cfg.debug);
+  const logger = createLogger(
+    cfg.debug,
+    cfg.logFile ? (line) => appendFileSync(cfg.logFile!, line + "\n") : undefined,
+  );
   const registry = new Registry(cfg.dataDir);
   const images = new ImageStore(cfg.dataDir);
   const memory = new MemoryStore(cfg.dataDir);

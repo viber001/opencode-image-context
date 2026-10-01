@@ -40,5 +40,7 @@ export function resolveConfig(raw: unknown): VisionConfig {
         ? source.analysisQuestion
         : base.analysisQuestion,
     debug: Boolean(source.debug),
+    logFile:
+      typeof source.logFile === "string" && source.logFile ? source.logFile : undefined,
   };
 }
