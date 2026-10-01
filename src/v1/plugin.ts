@@ -2,7 +2,9 @@ import { z } from "zod";
 import { createRuntime } from "../core/runtime.js";
 import { isImageAttachment } from "../core/image.js";
 import { buildSkippedNote, type VisionManager } from "../core/manager.js";
-import { stripMainImages, countImages, type WireMessage } from "../core/transform.js";
+import { stripMainImages, countImages, applyVisionRetention, type WireMessage } from "../core/transform.js";
+import { planRetention } from "../core/retention.js";
+import { MINIMAL_PNG_DATA_URL } from "../core/types.js";
 import { createV1Transport, type V1Client } from "./transport.js";
 
 export interface V1PluginInput {
@@ -114,12 +116,30 @@ export const VisionPluginV1 = async (input?: V1PluginInput, options?: unknown): 
 
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
-        const removed = stripMainImages(output.messages, (sid) => manager.classify(sid) === "vision");
-        if (runtime.cfg.debug) {
-          const counts = countImages(output.messages);
-          runtime.logger.debug(`transform removed=${removed} imagesBySession=${JSON.stringify(counts)}`);
-        } else if (removed > 0) {
+        const isVision = (sid: string) => manager.classify(sid) === "vision";
+        const removed = stripMainImages(output.messages, isVision);
+        if (removed > 0) {
           runtime.logger.debug(`stripped ${removed} historical image attachment(s) from a main request`);
+        }
+
+        // Vision child: hysteretic batch eviction over its own image history.
+        const outcome = applyVisionRetention(
+          output.messages,
+          isVision,
+          (items) => planRetention(items, runtime.cfg),
+          MINIMAL_PNG_DATA_URL,
+        );
+        if (outcome.evicted > 0) {
+          runtime.logger.info(
+            `image budget ${outcome.totalBytes}B > high watermark ${runtime.cfg.highWatermarkBytes}B`,
+          );
+          runtime.logger.info(`evicting oldest ${outcome.evicted}/${outcome.total} images`);
+          runtime.logger.info(`retained newest ${outcome.kept} images`);
+        }
+        if (runtime.cfg.debug) {
+          runtime.logger.debug(
+            `transform removed=${removed} evicted=${outcome.evicted} imagesBySession=${JSON.stringify(countImages(output.messages))}`,
+          );
         }
       } catch (err) {
         runtime.logger.error(`messages.transform failed: ${String((err as Error)?.message ?? err)}`);
