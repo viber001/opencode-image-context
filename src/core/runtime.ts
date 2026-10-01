@@ -3,6 +3,7 @@ import { createLogger, type Logger } from "./logger.js";
 import { ImageStore } from "./imageStore.js";
 import { Registry } from "./registry.js";
 import { VisionManager } from "./manager.js";
+import type { VisionTransport } from "../ports.js";
 import type { VisionConfig } from "./types.js";
 
 export interface Runtime {
@@ -14,11 +15,11 @@ export interface Runtime {
 }
 
 /** Build the shared core runtime from raw plugin options. */
-export function createRuntime(rawOptions: unknown): Runtime {
+export function createRuntime(rawOptions: unknown, transport?: VisionTransport): Runtime {
   const cfg = resolveConfig(rawOptions);
   const logger = createLogger(cfg.debug);
   const registry = new Registry(cfg.dataDir);
   const images = new ImageStore(cfg.dataDir);
-  const manager = new VisionManager({ cfg, registry, images, logger });
+  const manager = new VisionManager({ cfg, registry, images, logger, transport });
   return { cfg, logger, registry, images, manager };
 }

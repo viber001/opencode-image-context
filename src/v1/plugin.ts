@@ -1,5 +1,13 @@
 import { createRuntime } from "../core/runtime.js";
 import { isImageAttachment } from "../core/image.js";
+import { buildSkippedNote } from "../core/manager.js";
+import { createV1Transport, type V1Client } from "./transport.js";
+
+export interface V1PluginInput {
+  client: V1Client;
+  directory?: string;
+  worktree?: string;
+}
 
 /** Structural V1 hook shapes (avoid a hard dependency on the plugin package). */
 export interface V1ToolAfterInput {
@@ -28,31 +36,40 @@ export type V1Hooks = {
  * placeholder. Routing to a persistent vision child is added in a later
  * milestone; the core manager already owns validation/hashing/storage.
  */
-export const VisionPluginV1 = async (_input: unknown, options?: unknown): Promise<V1Hooks> => {
+export const VisionPluginV1 = async (input?: V1PluginInput, options?: unknown): Promise<V1Hooks> => {
   const runtime = createRuntime(options);
   if (!runtime.cfg.enabled) {
     runtime.logger.info("disabled by configuration");
     return {};
   }
+  if (input?.client) {
+    runtime.manager.setTransport(createV1Transport(input.client, runtime.cfg.model, runtime.logger));
+  } else {
+    runtime.logger.error("v1 adapter received no client; routing disabled");
+  }
+  const manager = runtime.manager;
   runtime.logger.info(`v1 adapter active dataDir=${runtime.cfg.dataDir}`);
 
   return {
-    "tool.execute.after": async (input, output) => {
+    "tool.execute.after": async (toolInput, output) => {
       try {
-        if (input?.tool !== "read") return;
+        if (toolInput?.tool !== "read") return;
         const attachments = output?.attachments;
         if (!Array.isArray(attachments) || attachments.length === 0) return;
 
-        const { images, placeholder } = runtime.manager.ingest(input.sessionID, attachments);
+        const { images, skipped } = manager.ingest(toolInput.sessionID, attachments);
 
         // Strip every image attachment from the main session immediately.
         output.attachments = attachments.filter((a) => !isImageAttachment(a));
-        if (placeholder) {
-          output.output = `${output.output ?? ""}\n${placeholder}`.trim();
-        }
-        if (images.length > 0) {
-          runtime.logger.debug(`stripped ${images.length} attachment(s) from main session main=${input.sessionID}`);
-        }
+        const skippedNote = buildSkippedNote(skipped);
+        if (skippedNote) output.output = `${output.output ?? ""}\n${skippedNote}`.trim();
+        if (images.length === 0) return;
+
+        runtime.logger.debug(`stripped ${images.length} attachment(s) from main session main=${toolInput.sessionID}`);
+
+        // Route to the persistent vision child; append its textual observation.
+        const route = await manager.routeImages(toolInput.sessionID, images);
+        if (route.text) output.output = `${output.output ?? ""}\n${route.text}`.trim();
       } catch (err) {
         runtime.logger.error(`tool.execute.after failed: ${String((err as Error)?.message ?? err)}`);
       }
