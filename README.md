@@ -86,8 +86,8 @@ bun install
 ```
 
 `install.sh` detects installed OpenCode binaries (`opencode`, `opencode2`, plus
-`/usr/local/bin` and `~/.local/bin`) and their major version, then writes the
-matching adapter into the config dir (`$XDG_CONFIG_HOME/opencode` or
+`/usr/local/bin` and `~/.local/bin`) and their version, then writes the matching
+adapter into the config dir (`$XDG_CONFIG_HOME/opencode` or
 `~/.config/opencode`):
 
 | Detected | Writes |
@@ -96,8 +96,15 @@ matching adapter into the config dir (`$XDG_CONFIG_HOME/opencode` or
 | V2 (`opencode`/`opencode2` major ≥ 2) | `<config>/plugin/opencode-image-context.js` (copy of `dist/v2.js`) |
 
 Options: `--v1`, `--v2`, `--all` (default), `--uninstall`, `--config DIR`,
-`--source DIR`, `--build`, `--dry-run`, `--help`. Build is skipped when the
-needed `dist/` output already exists; `--build` forces it.
+`--source DIR`, `--build`, `--no-exec`, `--dry-run`, `--help`. Build is skipped
+when the needed `dist/` output already exists; `--build` forces it.
+
+The version is read from install metadata first — the Homebrew Cellar path
+(e.g. `/opt/homebrew/Cellar/opencode/1.18.34/...`) or a neighbouring
+`package.json` — so the binary is not run. `--version` is used only as a
+fallback, and `--no-exec` disables that fallback entirely. Note that the config
+directory alone does not record the runtime version, so neither `install.sh`
+nor anything else can tell V1 from V2 purely from `~/.config/opencode/`.
 
 Equivalent `make` targets: `make install`, `make install-v1`, `make install-v2`,
 `make build`, `make test`, `make typecheck`, `make uninstall`.
