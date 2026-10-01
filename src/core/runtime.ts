@@ -1,6 +1,7 @@
 import { resolveConfig } from "./config.js";
 import { createLogger, type Logger } from "./logger.js";
 import { ImageStore } from "./imageStore.js";
+import { MemoryStore } from "./memoryStore.js";
 import { Registry } from "./registry.js";
 import { VisionManager } from "./manager.js";
 import type { VisionTransport } from "../ports.js";
@@ -11,6 +12,7 @@ export interface Runtime {
   logger: Logger;
   registry: Registry;
   images: ImageStore;
+  memory: MemoryStore;
   manager: VisionManager;
 }
 
@@ -20,6 +22,7 @@ export function createRuntime(rawOptions: unknown, transport?: VisionTransport):
   const logger = createLogger(cfg.debug);
   const registry = new Registry(cfg.dataDir);
   const images = new ImageStore(cfg.dataDir);
-  const manager = new VisionManager({ cfg, registry, images, logger, transport });
-  return { cfg, logger, registry, images, manager };
+  const memory = new MemoryStore(cfg.dataDir);
+  const manager = new VisionManager({ cfg, registry, images, memory, logger, transport });
+  return { cfg, logger, registry, images, memory, manager };
 }

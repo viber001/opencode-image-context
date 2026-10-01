@@ -2,6 +2,7 @@ import { isImageAttachment, parseImageDataUrl } from "./image.js";
 import { sha256Base64, shortHash } from "./hash.js";
 import type { Logger } from "./logger.js";
 import type { ImageStore } from "./imageStore.js";
+import type { MemoryStore } from "./memoryStore.js";
 import type { Registry } from "./registry.js";
 import type { VisionTransport } from "../ports.js";
 import type { Attachment, ImageRecord, ParsedImage, SessionRole, VisionConfig } from "./types.js";
@@ -32,6 +33,7 @@ export interface ManagerDeps {
   registry: Registry;
   images: ImageStore;
   logger: Logger;
+  memory?: MemoryStore;
   transport?: VisionTransport;
   now?: () => number;
 }
@@ -143,6 +145,14 @@ export class VisionManager {
         visionSessionID: "",
       };
       ingested.push({ attachment: att, parsed, sha256, storedPath, record });
+      this.deps.memory?.upsertImage(mainSessionID, {
+        sha256,
+        mime: parsed.mime,
+        bytes: parsed.bytes,
+        filename: att.filename,
+        storedPath: storedPath ?? undefined,
+        visionSessionID: record.visionSessionID || undefined,
+      });
       logger.debug(
         `ingested image sha256:${shortHash(sha256)} mime=${parsed.mime} bytes=${parsed.bytes} main=${mainSessionID}`,
       );
@@ -202,9 +212,30 @@ export class VisionManager {
     const observations: Observation[] = [];
     for (const img of images) {
       img.record.visionSessionID = child;
+      const cached = this.deps.memory?.get(mainSessionID, img.sha256);
+      if (cached?.analysis) {
+        img.record.analysis = cached.analysis;
+        observations.push({
+          sha256: img.sha256,
+          mime: img.parsed.mime,
+          bytes: img.parsed.bytes,
+          text: `${cached.analysis}\n(recalled from memory; ask via vision_ask to re-analyze)`,
+        });
+        logger.debug(`reused memory for sha256:${shortHash(img.sha256)} main=${mainSessionID}`);
+        continue;
+      }
       try {
         const text = await transport.sendImage(child, img.attachment, cfg.analysisQuestion);
         img.record.analysis = text;
+        this.deps.memory?.upsertImage(mainSessionID, {
+          sha256: img.sha256,
+          mime: img.parsed.mime,
+          bytes: img.parsed.bytes,
+          filename: img.attachment.filename,
+          storedPath: img.storedPath ?? undefined,
+          visionSessionID: child,
+        });
+        this.deps.memory?.setAnalysis(mainSessionID, img.sha256, text);
         observations.push({ sha256: img.sha256, mime: img.parsed.mime, bytes: img.parsed.bytes, text });
         logger.debug(`vision session retained image=sha256:${shortHash(img.sha256)} vision=${child}`);
       } catch (err) {
@@ -230,6 +261,8 @@ export class VisionManager {
     if (!link) return "[vision] no vision session is associated with this session yet; read an image first.";
     const alive = await transport.isAlive(link.visionSessionID).catch(() => false);
     if (!alive) throw new Error("vision session is unavailable");
-    return transport.ask(link.visionSessionID, question);
+    const answer = await transport.ask(link.visionSessionID, question);
+    this.deps.memory?.addQA(mainSessionID, question, answer);
+    return answer;
   }
 }
