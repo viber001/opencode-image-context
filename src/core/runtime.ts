@@ -1,0 +1,24 @@
+import { resolveConfig } from "./config.js";
+import { createLogger, type Logger } from "./logger.js";
+import { ImageStore } from "./imageStore.js";
+import { Registry } from "./registry.js";
+import { VisionManager } from "./manager.js";
+import type { VisionConfig } from "./types.js";
+
+export interface Runtime {
+  cfg: VisionConfig;
+  logger: Logger;
+  registry: Registry;
+  images: ImageStore;
+  manager: VisionManager;
+}
+
+/** Build the shared core runtime from raw plugin options. */
+export function createRuntime(rawOptions: unknown): Runtime {
+  const cfg = resolveConfig(rawOptions);
+  const logger = createLogger(cfg.debug);
+  const registry = new Registry(cfg.dataDir);
+  const images = new ImageStore(cfg.dataDir);
+  const manager = new VisionManager({ cfg, registry, images, logger });
+  return { cfg, logger, registry, images, manager };
+}
