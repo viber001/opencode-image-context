@@ -1,0 +1,27 @@
+{
+  "name": "opencode-image-context",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bound base64 image payloads replayed into OpenCode sessions (V1 + V2) while preserving recent visual context.",
+  "exports": {
+    "./v1": "./dist/v1.js",
+    "./v2": "./dist/v2.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "bun build src/v1.ts src/v2.ts --outdir dist --target node --format esm",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  },
+  "license": "MIT"
+}
