@@ -14,7 +14,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "bun build ./src/v1.ts --outdir dist --target node --format esm --external @opencode-ai/plugin --external zod",
+    "build": "bun build ./src/v1.ts ./src/v2.ts --outdir dist --target node --format esm --external @opencode-ai/plugin --external zod",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:e2e": "RUN_V1_E2E=1 bun test test/integration"
