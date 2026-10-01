@@ -50,6 +50,8 @@ export interface RouteResult {
   observations: Observation[];
   /** Text that should appear in the main session in place of the images. */
   text: string;
+  /** True when the vision child was replaced during this route. */
+  restarted: boolean;
 }
 
 function humanBytes(n: number): string {
@@ -168,45 +170,75 @@ export class VisionManager {
 
   /**
    * Return the persistent vision child for a main session, creating it on first
-   * use. A stored child that the transport reports as dead is replaced.
+   * use. A stored child reported dead by the transport is replaced and its
+   * textual memory restored.
    */
   async ensureVisionChild(mainSessionID: string): Promise<string> {
-    const { transport, registry, logger, cfg } = this.deps;
+    const { transport, registry, cfg, logger } = this.deps;
     if (!transport) throw new Error("vision transport not configured");
     const link = registry.getLink(mainSessionID);
     if (link) {
       const alive = await transport.isAlive(link.visionSessionID).catch(() => false);
       if (alive) return link.visionSessionID;
-      logger.warn(
-        `vision session=${link.visionSessionID} failed; creating replacement for main=${mainSessionID}`,
-      );
-      if (cfg.model && transport.setChildModel) {
-        // model is applied at prompt time; nothing to do here
-      }
+      return this.restartVision(mainSessionID, "session not found / not alive");
     }
     const child = await transport.createChild(mainSessionID, `vision for ${mainSessionID.slice(0, 12)}`);
     if (cfg.model && transport.setChildModel) {
       await transport.setChildModel(child, cfg.model).catch(() => undefined);
     }
-    if (link) registry.replaceVision(mainSessionID, child, this.now());
-    else registry.setLink({ mainSessionID, visionSessionID: child, createdAt: this.now(), generation: 0 });
+    registry.setLink({ mainSessionID, visionSessionID: child, createdAt: this.now(), generation: 0 });
     logger.info(`created vision session=${child} for main=${mainSessionID}`);
+    return child;
+  }
+
+  /** Compact textual summary of prior observations, used to seed a new child. */
+  private buildMemorySeed(mainSessionID: string): string | null {
+    const doc = this.deps.memory?.load(mainSessionID);
+    if (!doc) return null;
+    const images = Object.values(doc.images).filter((i) => i.analysis);
+    if (images.length === 0) return null;
+    const lines = ["[vision memory restore] Earlier you analyzed these images (their pixels are not attached):"];
+    for (const img of images.slice(-20)) {
+      lines.push(`- sha256:${shortHash(img.sha256, 16)} (${img.mime} ${img.bytes}B): ${String(img.analysis).slice(0, 300)}`);
+    }
+    lines.push("Continue answering visual questions; ask the user to re-read an image if you need its pixels again.");
+    return lines.join("\n");
+  }
+
+  /** Replace a failed vision child and restore textual memory into the new one. */
+  private async restartVision(mainSessionID: string, reason: string): Promise<string> {
+    const { transport, registry, cfg, logger } = this.deps;
+    if (!transport) throw new Error("vision transport not configured");
+    const old = registry.getLink(mainSessionID)?.visionSessionID;
+    logger.warn(`vision session=${old} failed (${reason})`);
+    const child = await transport.createChild(mainSessionID, `vision for ${mainSessionID.slice(0, 12)}`);
+    registry.replaceVision(mainSessionID, child, this.now());
+    logger.info(`creating replacement session=${child}`);
+    if (cfg.model && transport.setChildModel) {
+      await transport.setChildModel(child, cfg.model).catch(() => undefined);
+    }
+    const seed = this.buildMemorySeed(mainSessionID);
+    if (seed) {
+      await transport.ask(child, seed).catch(() => undefined);
+      logger.info("previous visual observations restored from memory");
+    }
     return child;
   }
 
   /** Route ingested images to the vision child and return its textual analysis. */
   async routeImages(mainSessionID: string, images: IngestedImage[]): Promise<RouteResult> {
     const { transport, logger, cfg } = this.deps;
-    if (images.length === 0) return { visionSessionID: null, observations: [], text: "" };
+    if (images.length === 0) return { visionSessionID: null, observations: [], text: "", restarted: false };
     if (!transport) {
-      return { visionSessionID: null, observations: [], text: buildPlaceholder(images, []) };
+      return { visionSessionID: null, observations: [], text: buildPlaceholder(images, []), restarted: false };
     }
     let child: string;
+    let restarted = false;
     try {
       child = await this.ensureVisionChild(mainSessionID);
     } catch (err) {
       logger.error(`failed to obtain vision child for main=${mainSessionID}: ${String((err as Error)?.message ?? err)}`);
-      return { visionSessionID: null, observations: [], text: buildPlaceholder(images, []) };
+      return { visionSessionID: null, observations: [], text: buildPlaceholder(images, []), restarted: false };
     }
 
     const observations: Observation[] = [];
@@ -224,8 +256,22 @@ export class VisionManager {
         logger.debug(`reused memory for sha256:${shortHash(img.sha256)} main=${mainSessionID}`);
         continue;
       }
+      const analyze = async (target: string): Promise<string> =>
+        transport.sendImage(target, img.attachment, cfg.analysisQuestion);
       try {
-        const text = await transport.sendImage(child, img.attachment, cfg.analysisQuestion);
+        let text: string;
+        try {
+          text = await analyze(child);
+        } catch (firstErr) {
+          // One recovery attempt: replace the child and retry on the fresh one.
+          logger.warn(
+            `vision analysis failed for sha256:${shortHash(img.sha256)} vision=${child}: ${String((firstErr as Error)?.message ?? firstErr)}`,
+          );
+          child = await this.restartVision(mainSessionID, String((firstErr as Error)?.message ?? firstErr));
+          restarted = true;
+          text = await analyze(child);
+        }
+        img.record.visionSessionID = child;
         img.record.analysis = text;
         this.deps.memory?.upsertImage(mainSessionID, {
           sha256: img.sha256,
@@ -239,8 +285,8 @@ export class VisionManager {
         observations.push({ sha256: img.sha256, mime: img.parsed.mime, bytes: img.parsed.bytes, text });
         logger.debug(`vision session retained image=sha256:${shortHash(img.sha256)} vision=${child}`);
       } catch (err) {
-        logger.warn(
-          `vision analysis failed for sha256:${shortHash(img.sha256)} vision=${child}: ${String((err as Error)?.message ?? err)}`,
+        logger.error(
+          `vision analysis unrecoverable for sha256:${shortHash(img.sha256)}: ${String((err as Error)?.message ?? err)}`,
         );
         observations.push({
           sha256: img.sha256,
@@ -250,7 +296,13 @@ export class VisionManager {
         });
       }
     }
-    return { visionSessionID: child, observations, text: formatObservations(observations, child) };
+    const header = restarted ? "[vision subsystem restarted]\n" : "";
+    return {
+      visionSessionID: child,
+      observations,
+      text: header + formatObservations(observations, child),
+      restarted,
+    };
   }
 
   /** Ask the main session's vision child a follow-up question. */
@@ -261,8 +313,15 @@ export class VisionManager {
     if (!link) return "[vision] no vision session is associated with this session yet; read an image first.";
     const alive = await transport.isAlive(link.visionSessionID).catch(() => false);
     if (!alive) throw new Error("vision session is unavailable");
-    const answer = await transport.ask(link.visionSessionID, question);
-    this.deps.memory?.addQA(mainSessionID, question, answer);
-    return answer;
+    try {
+      const answer = await transport.ask(link.visionSessionID, question);
+      this.deps.memory?.addQA(mainSessionID, question, answer);
+      return answer;
+    } catch (err) {
+      const child = await this.restartVision(mainSessionID, String((err as Error)?.message ?? err));
+      const answer = await transport.ask(child, question);
+      this.deps.memory?.addQA(mainSessionID, question, answer);
+      return `[vision subsystem restarted]\n${answer}`;
+    }
   }
 }
